@@ -364,6 +364,8 @@ class HCLReverseTransformer:
         return len(block.keys()) == 1
 
     def __init__(self):
+        self._current_block_type = None
+        self._current_attribute_key = None
         pass
 
     def transform(self, hcl_dict: dict) -> Tree:
@@ -473,6 +475,8 @@ class HCLReverseTransformer:
 
             # first, check whether the value is a "block"
             if self._is_block(value):
+                prev_block_type = self._current_block_type
+                self._current_block_type = key
                 for block_v in value:
                     block_labels, block_body_dict = self._calculate_block_labels(
                         block_v
@@ -497,9 +501,11 @@ class HCLReverseTransformer:
                     new_line.children.append(self._newline(level).children[0])
 
                     children.append(new_line)
-
+                self._current_block_type = prev_block_type
             # if the value isn't a block, it's an attribute
             else:
+                prev_attribute_key = self._current_attribute_key
+                self._current_attribute_key = key
                 expr_term = self._transform_value_to_expr_term(value, level)
                 attribute = Tree(
                     Token("RULE", "attribute"),
@@ -507,6 +513,7 @@ class HCLReverseTransformer:
                 )
                 children.append(attribute)
                 children.append(self._newline(level))
+                self._current_attribute_key = prev_attribute_key
 
         # since we're leaving a block body here, reduce the indentation of the
         # final newline if it exists
@@ -635,6 +642,19 @@ class HCLReverseTransformer:
 
                 parsed_value = attribute.children[2]
                 return parsed_value
+
+            # Context-aware handling of HCL type keywords
+            hcl_type_keywords = ["number", "string", "bool", "any", "map", "list", "set", "object", "tuple"]
+
+            if (
+                    self._current_block_type == "variable" and
+                    self._current_attribute_key == "type" and
+                    value in hcl_type_keywords
+            ):
+                return Tree(
+                    Token("RULE", "expr_term"),
+                    [Tree(Token("RULE", "identifier"), [Token("NAME", value)])]
+                )
 
             # otherwise it's just a string.
             return Tree(
